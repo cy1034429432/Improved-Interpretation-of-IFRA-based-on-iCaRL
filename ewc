@@ -1,0 +1,171 @@
+import torch
+from os.path import expanduser
+import argparse
+from torchvision import transforms
+from avalanche.benchmarks import nc_benchmark
+from avalanche.training.strategies import EWC
+from avalanche.models import make_icarl_net, initialize_icarl_net,IcarlNet
+from avalanche.evaluation.metrics import (
+    forgetting_metrics,
+    accuracy_metrics,
+    loss_metrics,
+    confusion_matrix_metrics
+)
+from avalanche.logging import InteractiveLogger, TensorboardLogger
+from avalanche.training.plugins import EvaluationPlugin
+from avalanche.benchmarks.utils import ImageFolder
+
+
+def get_dataset_per_pixel_mean(dataset):
+    result = None
+    patterns_count = 0
+
+    for img_pattern, _ in dataset:
+        if result is None:
+            result = torch.zeros_like(img_pattern, dtype=torch.float)
+
+        result += img_pattern
+        patterns_count += 1
+
+    if result is None:
+        result = torch.empty(0, dtype=torch.float)
+    else:
+        result = result / patterns_count
+
+    return result
+
+
+def main(args):
+    # model
+    model: IcarlNet = make_icarl_net(num_classes=9)
+    model.apply(initialize_icarl_net)
+    optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+    criterion = torch.nn.CrossEntropyLoss()
+
+    # check if selected GPU is available or use CPU
+    assert args.cuda == -1 or args.cuda >= 0, "cuda must be -1 or >= 0."
+    device = torch.device(
+        f"cuda:{args.cuda}"
+        if torch.cuda.is_available() and args.cuda >= 0
+        else "cpu"
+    )
+    print(f"Using device: {device}")
+
+    # create scenario
+
+    transform_pretrained = transforms.Compose([
+        transforms.Resize((32, 32)),
+        transforms.ToTensor(),
+    ])
+
+    per_pixel_mean = get_dataset_per_pixel_mean(
+        ImageFolder(root=r'.\IFRA_data(liner)', transform=transform_pretrained)
+        )
+
+    # 处理之后的transform
+    transform_train = transforms.Compose([transforms.Resize((32,32)),
+                                    transforms.ToTensor(),
+                                    lambda img_pattern: img_pattern - per_pixel_mean,
+                                    ])
+
+    transform_test = transforms.Compose([transforms.Resize((32, 32)),
+                                            transforms.ToTensor(),
+                                            lambda img_pattern: img_pattern - per_pixel_mean,
+                                          ])
+
+
+    IFRA_train = ImageFolder(root=r'.\IFRA_data(liner)', transform=transform_train)
+    IFRA_test = ImageFolder(root=r'.\IFRA_data(liner)_test', transform=transform_test)
+
+
+    scenario = nc_benchmark(
+        train_dataset=IFRA_train,
+        test_dataset=IFRA_test,
+        n_experiences=9,
+        task_labels=False,
+        seed=1234,
+    )
+    # choose some metrics and evaluation method
+    evaluator = EvaluationPlugin(
+        accuracy_metrics(minibatch=True, epoch=True, experience=True, stream=True),
+        loss_metrics(minibatch=True, epoch=True, experience=True, stream=True),
+        forgetting_metrics(experience=True, stream=True),
+        confusion_matrix_metrics(num_classes=scenario.n_classes, save_image=True,
+                                 stream=True),
+
+        loggers=[InteractiveLogger(), TensorboardLogger()],
+        benchmark=scenario
+    )
+
+
+
+    # create strategy
+    strategy = EWC(
+        model,
+        optimizer,
+        criterion,
+        args.ewc_lambda,
+        args.ewc_mode,
+        decay_factor=args.decay_factor,
+        train_epochs=args.epochs,
+        device=device,
+        train_mb_size=args.minibatch_size,
+        evaluator=evaluator,
+    )
+
+    # train on the selected scenario with the chosen strategy
+    print("Starting experiment...")
+    results = []
+    for experience in scenario.train_stream:
+        print("Start training on experience ", experience.current_experience)
+        strategy.train(experience)
+        print("End training on experience", experience.current_experience)
+        print("Computing accuracy on the test set")
+        results.append(strategy.eval(scenario.test_stream[:]))
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--scenario",
+        type=str,
+        choices=["pmnist", "smnist"],
+        default="smnist",
+        help="Choose between Permuted MNIST, Split MNIST.",
+    )
+    parser.add_argument(
+        "--ewc_mode",
+        type=str,
+        choices=["separate", "online"],
+        default="online",
+        help="Choose between EWC and online.",
+    )
+    parser.add_argument(
+        "--ewc_lambda",
+        type=float,
+        default=0.4,
+        help="Penalty hyperparameter for EWC",
+    )
+    parser.add_argument(
+        "--decay_factor",
+        type=float,
+        default=0.1,
+        help="Decay factor for importance " "when ewc_mode is online.",
+    )
+    parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate.")
+    parser.add_argument("--hs", type=int, default=256, help="MLP hidden size.")
+    parser.add_argument(
+        "--epochs", type=int, default=70, help="Number of training epochs."
+    )
+    parser.add_argument(
+        "--minibatch_size", type=int, default=128, help="Minibatch size."
+    )
+    parser.add_argument(
+        "--cuda",
+        type=int,
+        default=0,
+        help="Specify GPU id to use. Use CPU if -1.",
+    )
+    args = parser.parse_args()
+
+    main(args)
