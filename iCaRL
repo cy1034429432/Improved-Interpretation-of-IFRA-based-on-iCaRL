@@ -177,7 +177,7 @@ if __name__ == '__main__':
     # 初始化一些参数
     config.batch_size = 128
     config.nb_exp = 1
-    config.memory_size = 1200   # 其余两个是900
+    config.memory_size = 900
     config.epochs = 70
     config.lr_base = 2
     config.lr_milestones = [49, 63]
