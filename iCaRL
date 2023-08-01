@@ -1,6 +1,6 @@
-# icarl 导入模型
+# icarl 
 from avalanche.models import IcarlNet, make_icarl_net, initialize_icarl_net
-# 导入插件
+
 from avalanche.training.plugins.lr_scheduling import LRSchedulerPlugin
 from avalanche.training.plugins import EvaluationPlugin
 from avalanche.evaluation.metrics import forgetting_metrics, \
@@ -9,15 +9,15 @@ confusion_matrix_metrics, disk_usage_metrics, accuracy
 
 from avalanche.logging import InteractiveLogger, TensorboardLogger
 
-# 使用一些现成的包对做好数据集
+
 from avalanche.benchmarks.utils import ImageFolder
 from avalanche.benchmarks.generators import nc_benchmark
 from avalanche.training.strategies import ICaRL
 import torchvision
 from torchvision import transforms
-# 读进度条
+
 from tqdm import tqdm
-# 模型训练
+
 import torch
 from torch.optim import SGD, Adam
 from torch.optim.lr_scheduler import MultiStepLR
@@ -27,7 +27,7 @@ import random
 
 
 
-# 图片预处理
+
 def get_dataset_per_pixel_mean(dataset):
     result = None
     patterns_count = 0
@@ -66,7 +66,7 @@ def icarl_mydata_augment_data(img):
     return t
 
 
-# 设置一些参数使用的魔法方法
+
 class Config(dict):
     def __getattribute__(self, key):
         try:
@@ -89,7 +89,7 @@ def run_experiment(config):
     torch.backends.cudnn.deterministic = True
 
 
-    # 预处理使用的transform
+    
     transform_pretrained = transforms.Compose([
         transforms.Resize((32, 32)),
         transforms.ToTensor(),
@@ -99,7 +99,7 @@ def run_experiment(config):
         ImageFolder(root=r'.\IFRA_data(liner)', transform=transform_pretrained)
         )
 
-    # 处理之后的transform
+   
     transform_train = transforms.Compose([transforms.Resize((32,32)),
                                     transforms.ToTensor(),
                                     lambda img_pattern: img_pattern - per_pixel_mean,
@@ -173,8 +173,6 @@ def run_experiment(config):
 
 if __name__ == '__main__':
     config = Config()
-
-    # 初始化一些参数
     config.batch_size = 128
     config.nb_exp = 1
     config.memory_size = 900
